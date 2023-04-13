@@ -1,0 +1,220 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================#                                                            
+---                                                               
+- name: Phase 3 - Install and configure K8s requirements
+  hosts: all
+  become: yes
+  vars_files:
+    - variables.yaml
+  tasks:
+
+#---------[Disable Ubuntu firewall]---------------------------------------------------------------------------------------------------------------------------#
+    - name: disable Ubuntu firewall
+      shell: ufw disable
+
+#---------[Create "kube" user account]------------------------------------------------------------------------------------------------------------------------#
+    - name: create the kube user account
+      user: name=kube append=yes state=present createhome=yes shell=/bin/bash
+
+    - name: allow 'kube' to use sudo without needing a password
+      lineinfile:
+        dest: /etc/sudoers
+        line: 'kube ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+  
+    - name: Create Kubernetes config directory
+      file:
+        path: /home/kube/.kube/config
+        state: directory
+        owner: kube
+        group: kube
+        mode: "0755"
+
+#---------[Deactivate swap]-----------------------------------------------------------------------------------------------------------------------------------#
+    - name: Make the Swap inactive
+      command: swapoff -a
+
+    - name: Remove Swap entry from /etc/fstab.
+      lineinfile:
+        dest: /etc/fstab
+        regexp: swap
+        state: absent
+
+#---------[Install required packages]-------------------------------------------------------------------------------------------------------------------------#
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - git 
+          - curl 
+          - jq
+          - nfs-common 
+          - net-tools 
+          - kubetail 
+          - fzf
+          - python3-pip
+        state: present
+
+
+    - name: Install Kubernetes Python library
+      become: true
+      ansible.builtin.pip:
+        name: kubernetes
+        state: present
+
+
+#---------[Mount NFS share]-----------------------------------------------------------------------------------------------------------------------------------#
+    - name: Create mount directory
+      file:
+        path: /mnt/nfs
+        state: directory
+
+    - name: Mount NFS share on client
+      shell: sudo mount -t nfs "{{NFSLB_IP}}":/data /mnt/nfs
+
+#---------[Add Kubernetes repositories]-----------------------------------------------------------------------------------------------------------------------#
+    - name: Add Kubernetes apt-key
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Add Kubernetes apt repository
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+
+    - name: Refresh update chache
+      shell: sudo apt update
+
+#---------[Install Containerd]--------------------------------------------------------------------------------------------------------------------------------#
+    - name: Install Containerd
+      shell: |
+        wget https://github.com/containerd/containerd/releases/download/v{{CONTAINERDVERSION}}/containerd-{{CONTAINERDVERSION}}-linux-amd64.tar.gz
+        tar Cxzvf /usr/local containerd-{{CONTAINERDVERSION}}-linux-amd64.tar.gz
+        rm -f containerd-{{CONTAINERDVERSION}}-linux-amd64.tar.gz
+
+        wget -O /usr/lib/systemd/system/containerd.service https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+        systemctl daemon-reload
+        systemctl enable --now containerd
+
+        mkdir /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+        sed -i "s/SystemdCgroup = false/SystemdCgroup = true/" /etc/containerd/config.toml
+        systemctl restart containerd
+
+#---------[Install Runc]--------------------------------------------------------------------------------------------------------------------------------------#
+    - name: Install runc
+      shell: |
+        wget https://github.com/opencontainers/runc/releases/download/v{{RUNCVERSION}}/runc.amd64
+        install -m 755 runc.amd64 /usr/local/sbin/runc
+        rm -f runc.amd64
+
+#---------[Install CNI Plugins]-------------------------------------------------------------------------------------------------------------------------------#
+    - name: Install CNI Plugins
+      shell: |
+        wget https://github.com/containernetworking/plugins/releases/download/v{{CNIPLUGINSVERSION}}/cni-plugins-linux-amd64-v{{CNIPLUGINSVERSION}}.tgz
+        mkdir -p /opt/cni/bin
+        tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v{{CNIPLUGINSVERSION}}.tgz
+        rm -f cni-plugins-linux-amd64-v{{CNIPLUGINSVERSION}}.tgz
+
+#---------[Install Crictctl]----------------------------------------------------------------------------------------------------------------------------------#
+    - name: Install crictctl
+      shell: |
+        wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v{{CRICTLVERSION}}/crictl-v{{CRICTLVERSION}}-linux-amd64.tar.gz
+        tar Cxzvf /usr/local/bin crictl-v{{CRICTLVERSION}}-linux-amd64.tar.gz
+        rm -f crictl-v{{CRICTLVERSION}}-linux-amd64.tar.gz
+
+        cat <<EOF | tee /etc/crictl.yaml
+        runtime-endpoint: unix:///run/containerd/containerd.sock
+        image-endpoint: unix:///run/containerd/containerd.sock
+        timeout: 2
+        debug: false
+        pull-image-on-create: false
+        EOF
+
+        echo CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock >> /etc/environment
+        echo IMAGE_SERVICE_ENDPOINT=unix:///run/containerd/containerd.sock >> /etc/environment
+
+#---------[Install K8s requirements]--------------------------------------------------------------------------------------------------------------------------#
+    - name: Enable IP forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: 1
+        state: present
+        sysctl_set: yes
+
+    - name: Load kernel modules for containerd
+      copy:
+        content: |
+          overlay
+          br_netfilter
+        dest: /etc/modules-load.d/containerd.conf
+
+    - name: Load kernel modules for containerd
+      shell: modprobe {{ item }}
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Set kernel parameters for Kubernetes CRI
+      copy:
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+
+#---------[Apply changes without reboot]----------------------------------------------------------------------------------------------------------------------#
+    - name: Reload kernel parameters
+      command: sysctl --system
+
+#---------[Install Kubeadm etc.]------------------------------------------------------------------------------------------------------------------------------#
+    - name: Refresh update chache
+      shell: sudo apt update
+
+    - name: Install kubeadm etc.
+      apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: yes
+        allow_downgrades: yes
+      with_items:
+        - kubelet={{K8SVERSION}}-00
+        - kubeadm={{K8SVERSION}}-00
+        - kubectl={{K8SVERSION}}-00
+
+    - name: Hold kubelet, kubeadm, and kubectl packages
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+#---------[Install HELM]--------------------------------------------------------------------------------------------------------------------------------------#
+    - name: Download Helm binary
+      get_url:
+        url: "https://get.helm.sh/helm-v{{ HELMVERSION }}-linux-amd64.tar.gz"
+        dest: "/tmp/helm-v{{ HELMVERSION }}-linux-amd64.tar.gz"
+
+    - name: Install Helm
+      shell: |
+        tar -xvzf /tmp/helm-v"{{HELMVERSION}}"-linux-amd64.tar.gz
+        mv linux-amd64/helm /usr/local/bin/
+        rm -f /tmp/helm-v"{{HELMVERSION}}"-linux-amd64.tar.gz
+        rm -rf linux-amd64/

@@ -1,0 +1,61 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================# 
+---                                                               
+- name: Phase 3 - Configure cluster
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars_files:
+    - variables.yaml
+  tasks:
+
+#---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
+    - name: Get the first master in the group
+      set_fact:
+         initial_master: "{{ groups['master'] | sort | first }}"
+
+#---------[Label master nodes]--------------------------------------------------------------------------------------------------------------------------------#
+    - name: configure master node labels
+      shell: kubectl label node "{{ item }}" node-role.kubernetes.io/master=master --overwrite
+      when: inventory_hostname == initial_master 
+      with_items:
+        - "{{Master01_FQDN}}"
+        - "{{Master02_FQDN}}"
+        - "{{Master03_FQDN}}"
+    
+    - name: configure master node labels
+      shell: kubectl label node "{{ item }}" node-role.kubernetes.io/control-plane=control-plane --overwrite
+      when: inventory_hostname == initial_master
+      with_items:
+        - "{{Master02_FQDN}}"
+        - "{{Master03_FQDN}}"
+
+#---------[Label worker nodes]--------------------------------------------------------------------------------------------------------------------------------#
+    - name: configure worker node labels
+      shell: kubectl label node "{{ item }}" node-role.kubernetes.io/worker=worker --overwrite
+      when: inventory_hostname == initial_master
+      with_items:
+        - "{{Worker01_FQDN}}"
+        - "{{Worker02_FQDN}}"
+        - "{{Worker03_FQDN}}"
+
+    - name: Copy admin.conf to /root/.kube/config
+      when: inventory_hostname in groups['master'] and inventory_hostname != initial_master
+      copy:
+        src: /mnt/nfs/admin.conf
+        dest: /root/.kube/config
+        mode: '0600'
+        owner: root
+        group: root
+        remote_src: yes

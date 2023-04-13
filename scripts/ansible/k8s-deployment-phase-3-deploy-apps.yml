@@ -1,0 +1,495 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================# 
+---
+- name: Deloy apps
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars_files:
+    - variables.yaml
+  tasks:
+
+#---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
+    - name: Get the first master in the group
+      set_fact:
+         initial_master: "{{ groups['master'] | sort | first }}"
+
+
+#---------[Add Helm Repositories]-----------------------------------------------------------------------------------------------------------------------------#
+    - name: Add nfs-subdir-external-provisioner Helm repository
+      when: inventory_hostname in groups['master']
+      shell: helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+      
+    - name: Add ingress-nginx Helm repository
+      when: inventory_hostname in groups['master']
+      shell: helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+      
+    - name: Add metrics-server Helm repository
+      when: inventory_hostname in groups['master']
+      shell: helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+      
+    - name: Add bitnami Helm repository
+      when: inventory_hostname in groups['master']
+      shell: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+    - name: Grafana Prometheus Stack Helm repository
+      when: inventory_hostname in groups['master']
+      shell: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      
+    - name: Update Helm repositories
+      when: inventory_hostname in groups['master']
+      shell: helm repo update
+
+#---------[Create Namespaces]---------------------------------------------------------------------------------------------------------------------------------# 
+    - name: Create namespaces
+      when: inventory_hostname == initial_master
+      shell: kubectl create namespace "{{item}}"
+      with_items:
+      - core
+      - prometheus
+      - drupal
+      ignore_errors: yes
+
+#---------[Create TLS Secret]---------------------------------------------------------------------------------------------------------------------------------# 
+    - name: Create TLS Secret
+      when: inventory_hostname == initial_master
+      shell: kubectl create secret tls tls-wildcard-secret -n "{{item}}" --cert=/mnt/nfs/cloudflare.crt --key=/mnt/nfs/cloudflare.key
+      with_items:
+      - core
+      - prometheus
+      - drupal
+
+#---------[Deploy nfs-subdir-provisioner]---------------------------------------------------------------------------------------------------------------------# 
+    - name: Create nfs-values.yaml file
+      when: inventory_hostname == initial_master
+      copy:
+        dest: /root/nfs-values.yaml
+        content: |
+          nfs:
+            server: "{{NFSLB_IP}}"
+            path: "/data"
+          storageClass:
+            defaultClass: true
+            name: nfs-client
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ''
+          tolerations:
+            - key: "node-role.kubernetes.io/control-plane"
+              operator: "Exists"
+              effect: "NoSchedule"
+            - key: "node.kubernetes.io/not-ready"
+              operator: "Exists"
+              effect: "NoExecute"
+              tolerationSeconds: 300
+            - key: "node.kubernetes.io/unreachable"
+              operator: "Exists"
+              effect: "NoExecute"
+              tolerationSeconds: 300
+      
+    - name: deploy nfs-values.yaml
+      when: inventory_hostname == initial_master
+      shell: helm install -n core -f /root/nfs-values.yaml nfs-subdir-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
+      tags: nfs
+
+    - name: Wait for NFS Subdir External Provisioner pod to be ready
+      when: inventory_hostname == initial_master
+      shell: kubectl get pods -n core -l app=nfs-subdir-external-provisioner -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}'
+      register: nfs_subdir_pod_ready
+      until: nfs_subdir_pod_ready.stdout == 'True'
+      retries: 30
+      delay: 10
+      tags: nfs
+
+#---------[Deploy nginx-ingress]------------------------------------------------------------------------------------------------------------------------------# 
+    - name: Create ingress-values.yaml file
+      when: inventory_hostname == initial_master
+      copy:
+        dest: /root/ingress-values.yaml
+        content: |
+          controller:
+            hostNetwork: true
+            rbac: true
+            service:
+              type: NodePort
+            kind: DaemonSet
+            admissionWebhooks:
+              patch:
+                nodeSelector:
+                  kubernetes.io/os: linux
+                  node-role.kubernetes.io/control-plane: ''
+                tolerations:
+                  - key: "node-role.kubernetes.io/control-plane"
+                    operator: "Exists"
+                    effect: "NoSchedule"
+                  - key: "node.kubernetes.io/not-ready"
+                    operator: "Exists"
+                    effect: "NoExecute"
+                    tolerationSeconds: 300
+                  - key: "node.kubernetes.io/unreachable"
+                    operator: "Exists"
+                    effect: "NoExecute"
+                    tolerationSeconds: 300
+            nodeSelector:
+              kubernetes.io/os: linux
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+            tls:
+              - secretName: tls-wildcard-secret
+                hosts:
+                  - "{{PROMETHEUS_FQDN}}"
+                  - "{{ALERTMANAGER_FQDN}}"
+                  - "{{GRAFANA_FQDN}}"
+                  - "{{GRAFANA_FQDN}}"
+      tags: nginx_ingress
+
+    - name: deploy ingress-values.yaml
+      when: inventory_hostname == initial_master
+      shell: helm install -n core -f /root/ingress-values.yaml nginx-ingress ingress-nginx/ingress-nginx
+      tags: nginx_ingress
+
+    - name: Wait for nginx-ingress pod to be ready
+      when: inventory_hostname == initial_master
+      shell: kubectl get pods -n core -l app.kubernetes.io/name=ingress-nginx,app.kubernetes.io/component=controller  -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}'
+      register: nginx_ingress_pod_ready
+      until: nginx_ingress_pod_ready.stdout == 'True'
+      retries: 30
+      delay: 10
+      tags: nginx_ingress
+
+#---------[Deploy metrics-server]-----------------------------------------------------------------------------------------------------------------------------# 
+    - name: Create metrics-values.yaml file
+      when: inventory_hostname == initial_master
+      copy:
+        dest: /root/metrics-values.yaml
+        content: |
+          args:
+            - --kubelet-insecure-tls
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ''
+          tolerations:
+            - key: "node-role.kubernetes.io/control-plane"
+              operator: "Exists"
+              effect: "NoSchedule"
+            - key: "node.kubernetes.io/not-ready"
+              operator: "Exists"
+              effect: "NoExecute"
+              tolerationSeconds: 300
+            - key: "node.kubernetes.io/unreachable"
+              operator: "Exists"
+              effect: "NoExecute"
+              tolerationSeconds: 300
+
+    - name: deploy metrics-values.yaml 
+      when: inventory_hostname == initial_master
+      shell: helm install -n kube-system -f /root/metrics-values.yaml metrics-server metrics-server/metrics-server
+      tags: metrics_server
+
+    - name: Wait for metrics_server pod to be ready
+      when: inventory_hostname == initial_master
+      shell: kubectl get pods -n kube-system -l app.kubernetes.io/name=metrics_server,app.kubernetes.io/component=controller -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}'
+      register: metrics_server_ready
+      retries: 30
+      delay: 10
+      until: nginx_ingress_pod_ready.stdout == 'True'
+      ignore_errors: yes
+      tags:
+        - metrics_server
+
+#---------[Deploy prometheus]---------------------------------------------------------------------------------------------------------------------------------#
+    - name: Create prom-values.yaml
+      when: inventory_hostname == initial_master
+      copy:
+        dest: /root/prom-values.yaml
+        content: |
+          global:
+            storageClass: "nfs-client"
+          operator:
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+          kube-state-metrics:
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+          blackboxExporter:
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+          node-exporter:  
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+          prometheus:
+            persistence:
+              enabled: true
+            ingress:
+              enabled: true
+              hostname: "{{PROMETHEUS_FQDN}}"
+              ingressClassName: nginx
+              tls: true
+              extraTls:
+                - hosts:
+                    - "{{PROMETHEUS_FQDN}}"
+                  secretName: tls-wildcard-secret
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+          alertmanager:
+            persistence:
+              enabled: true
+            ingress:
+              enabled: true
+              hostname: "{{ALERTMANAGER_FQDN}}"
+              ingressClassName: nginx
+              tls: true
+              extraTls:
+                - hosts:
+                    - "{{ALERTMANAGER_FQDN}}"
+                  secretName: tls-wildcard-secret
+
+    - name: deploy prom-values.yaml 
+      when: inventory_hostname == initial_master
+      shell: helm install -n prometheus -f /root/prom-values.yaml prometheus bitnami/kube-prometheus
+      tags: prometheus
+
+    - name: Wait for prometheus pod to be ready
+      when: inventory_hostname == initial_master
+      shell: kubectl get pods -n prometheus -l app.kubernetes.io/name=prometheus,app.kubernetes.io/component=controller -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}'
+      register: prometheus_ready
+      until: prometheus_ready.stdout == 'True'
+      ignore_errors: yes
+      retries: 30
+      delay: 10
+      tags: prometheus
+
+#---------[Deploy grafana]------------------------------------------------------------------------------------------------------------------------------------#
+    - name: Create grafana-values.yaml
+      when: inventory_hostname == initial_master
+      become: true
+      copy:
+        dest: /root/grafana-values.yaml
+        content: |
+          global:
+            storageClass: "nfs-client"
+          persistence:
+            enabled: true
+          ingress:
+            enabled: true
+            hostname: {{GRAFANA_FQDN}}
+            ingressClassName: nginx
+            tls: true
+            extraTls:
+            - hosts:
+              - {{GRAFANA_FQDN}}
+              secretName: tls-wildcard-secret
+          admin:
+            user: admin
+            password: {{GRAFANA_ADMIN_PW}}
+          grafana:
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+                
+    - name: deploy grafana-values.yaml
+      when: inventory_hostname == initial_master
+      shell: helm install -n prometheus -f /root/grafana-values.yaml grafana bitnami/grafana
+      tags: grafana
+
+    - name: Wait for grafana pod to be ready
+      when: inventory_hostname == initial_master
+      shell: kubectl get pods -n prometheus -l app.kubernetes.io/name=grafana,app.kubernetes.io/component=controller -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}'
+      register: grafana_ready
+      until: grafana_ready.stdout == 'True'
+      retries: 30
+      delay: 10
+      ignore_errors: yes
+      tags: grafana
+
+#---------[Deploy deupal]-------------------------------------------------------------------------------------------------------------------------------------#
+    - name: Create drupal-values.yaml
+      when: inventory_hostname == initial_master
+      copy:
+        dest: /root/drupal-values.yaml
+        content: |
+          global:
+            storageClass: "nfs-client"
+          persistence:
+            enabled: true
+          ingress:
+            enabled: true
+            hostname: "{{DRUPAL_FQDN}}"
+            ingressClassName: nginx
+            tls: true
+            extraTls:
+            - hosts:
+              - "{{DRUPAL_FQDN}}"
+              secretName: tls-wildcard-secret
+          drupalUsername: admin
+          drupalPassword: {{DRUPAL_ADMIN_PW}}
+          drupalEmail: {{DRUPAL_ADMIN_EMAIL}}
+          mariadb:
+            rootUser:
+              password: {{DRUPAL_MYSQL_ROOT_PW}}
+          drupal:
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ''
+            tolerations:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: "Exists"
+                effect: "NoSchedule"
+              - key: "node.kubernetes.io/not-ready"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+              - key: "node.kubernetes.io/unreachable"
+                operator: "Exists"
+                effect: "NoExecute"
+                tolerationSeconds: 300
+
+    - name: Deploy Drupal
+      when: inventory_hostname == initial_master
+      shell: helm install -n drupal -f /root/drupal-values.yaml drupal bitnami/drupal
+      tags: drupal
+
+    - name: Wait for drupal pod to be ready
+      when: inventory_hostname == initial_master
+      shell: kubectl get pods -n drupal -l app.kubernetes.io/name=drupal,app.kubernetes.io/component=controller -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}'
+      register: drupal_ready
+      until: drupal_ready.stdout == 'True'
+      retries: 30
+      delay: 10
+      ignore_errors: yes
+      tags: drupal
+
+#---------[Cleanup old .yaml files]---------------------------------------------------------------------------------------------------------------------------#
+    - name: Clean up old .yaml
+      when: inventory_hostname == initial_master
+      shell:   rm -f /root/"{{item}}".yaml
+      with_items:
+        - nfs-values
+        - ingress-values
+        - metrics-values
+        - prom-values.yaml
+        - grafana-values.yaml
+        - drupal-values.yaml
+
+#---------[Configure Grafana]---------------------------------------------------------------------------------------------------------------------------------#
+    - name: create prometheus datasource
+      when: inventory_hostname == initial_master
+      community.grafana.grafana_datasource:
+        url: "https://{{GRAFANA_FQDN:}}"
+        name: prometheus
+        ds_type: prometheus
+        ds_url: "https://{{PROMETHEUS_FQDN}}"
+        access: proxy
+        tls_skip_verify: true
+        is_default: true
+        url_username: admin
+        url_password: "{{GRAFANA_ADMIN_PW}}"
+        validate_certs: no
+
+    - name: Create a folder
+      when: inventory_hostname == initial_master
+      community.grafana.grafana_folder:
+        url: "https://{{GRAFANA_FQDN:}}"
+        title: "Monitoring"
+        url_username: admin
+        url_password: "{{GRAFANA_ADMIN_PW}}"
+        state: present
+        validate_certs: no
+
+    - name: Import Grafana dashboard
+      when: inventory_hostname == initial_master
+      community.grafana.grafana_dashboard:
+        grafana_url: "https://{{GRAFANA_FQDN:}}"
+        url_username: admin
+        url_password: "{{GRAFANA_ADMIN_PW}}"
+        folder: Monitoring
+        dashboard_id: 315
+        validate_certs: no

@@ -1,0 +1,92 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================# 
+---
+- name: Phase 2 - Update and configure hosts
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
+
+#---------[Install updates and upgrade system]-----------------------------------------------------------------------------------------------------------------#
+    - name: Update Ubuntu packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+      register: update_result
+    
+    - name: Upgrade Ubuntu packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+
+#---------[NTP configuration for ubuntu]-----------------------------------------------------------------------------------------------------------------------#  
+    - name: Install NTP
+      apt:
+        name: ntp
+        state: latest
+
+    - name: Configure NTP servers
+      lineinfile:
+        path: /etc/ntp.conf
+        regexp: '^server '
+        line: 'server 0.ch.pool.ntp.org iburst'
+        state: present
+        insertafter: '^# pool.ntp.org maps to about 1000 low-stratum NTP servers'
+
+    - name: Ensure NTP service is started and enabled
+      service:
+        name: ntp
+        state: started
+        enabled: yes
+
+    - name: restart ntp
+      shell: systemctl restart ntp
+
+#---------[Disable IPv6]---------------------------------------------------------------------------------------------------------------------------------------#  
+    - name: Disable IPv6 on all interfaces
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net.ipv6.conf.all.disable_ipv6'
+        line: 'net.ipv6.conf.all.disable_ipv6 = 1'
+        create: yes
+
+    - name: Disable IPv6 on specific interfaces (e.g. eth0)
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net.ipv6.conf.eth0.disable_ipv6'
+        line: 'net.ipv6.conf.eth0.disable_ipv6 = 1'
+        create: yes
+
+#---------[Reboot all vms]-------------------------------------------------------------------------------------------------------------------------------------#      
+    - name: Reboot VMs if updates installed
+      reboot:
+      when: update_result.changed
+
+    - name: Wait for SSH to become available
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 22
+        delay: 10
+        timeout: 300
+      register: ssh_result
+
+    - name: Wait for system to be ready
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 22
+        delay: 10
+        timeout: 300
+        search_regex: .*
+      when: ssh_result.elapsed < 300

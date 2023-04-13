@@ -1,0 +1,66 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================# 
+---
+- name: Phase 1 - Provision VMs
+  hosts: all
+  gather_facts: no
+  tasks:
+
+#---------[Scheduled Task: Sync Github Repository]-------------------------------------------------------------------------------------------------------------#
+    - name: Sync Github Files
+      win_command: schtasks /run /tn "K8s-Deployment\UPG-K8s-Deployment-Sync-GitHub-Repo"
+
+    - name: Wait for scheduled task to complete
+      win_shell: |
+        $taskComplete = $false
+        while (-not $taskComplete) {
+          $status = (schtasks /query /TN "K8s-Deployment\UPG-K8s-Deployment-Sync-GitHub-Repo" /FO CSV | ConvertFrom-Csv | Select "Status").Status
+          if ($status -eq "Ready") {
+            $taskComplete = $true
+          } else {
+            Start-Sleep -Seconds 5
+          }
+        }
+
+#---------[Scheduled Task: Provision VMs]----------------------------------------------------------------------------------------------------------------------#
+    - name: Provision VMs
+      win_command: schtasks /run /tn "K8s-Deployment\UPG-K8s-Deployment-Deploy-VMs"
+
+    - name: Wait for scheduled task to complete
+      win_shell: |
+        $taskComplete = $false
+        while (-not $taskComplete) {
+          $status = (schtasks /query /TN "K8s-Deployment\UPG-K8s-Deployment-Deploy-VMs" /FO CSV | ConvertFrom-Csv | Select "Status").Status
+          if ($status -eq "Ready") {
+            $taskComplete = $true
+          } else {
+            Start-Sleep -Seconds 5
+          }
+        }
+
+#---------[Scheduled Task: Update AWX API]---------------------------------------------------------------------------------------------------------------------#
+    - name: Update AWX API
+      win_command: schtasks /run /tn "K8s-Deployment\UPG-K8s-Deployment-Update-AWX-API"
+
+    - name: Wait for scheduled task to complete
+      win_shell: |
+        $taskComplete = $false
+        while (-not $taskComplete) {
+          $status = (schtasks /query /TN "K8s-Deployment\UPG-K8s-Deployment-Update-AWX-API" /FO CSV | ConvertFrom-Csv | Select "Status").Status
+          if ($status -eq "Ready") {
+            $taskComplete = $true
+          } else {
+            Start-Sleep -Seconds 5
+          }
+        }

@@ -1,0 +1,103 @@
+{
+    "vms": [
+      {
+        "vmname": "k8smaster01",
+        "fqdn": "k8smaster01.it-ads.ch",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.100/24",
+        "role" : "master"
+      },
+      {
+        "vmname": "k8smaster02",
+        "fqdn": "k8smaster02.it-ads.ch",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.101/24",
+        "role" : "master"
+      },
+      {
+        "vmname": "k8smaster03",
+        "fqdn": "k8smaster03.it-ads.ch",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.102/24",
+        "role" : "master"
+      },
+      {
+        "vmname": "k8sworker01",
+        "fqdn": "k8sworker01.it-ads.ch",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.105/24",
+        "role" : "worker"
+      },
+      {
+        "vmname": "k8sworker02",
+        "fqdn": "k8sworker02.it-ads.ch",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.106/24",
+        "role" : "worker"
+      },
+      {
+        "vmname": "k8sworker03",
+        "fqdn": "k8sworker03.it-ads.ch",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.107/24",
+        "role" : "worker"
+      }
+    ],  
+    "lb": [
+      {
+        "vmname": "k8slbnfs01",
+        "fqdn": "k8slbnfs01.it-ads.ch",
+        "memory": "8192",
+        "cpu_cores": 2,
+        "ip_address": "10.200.104.30/24"
+      }
+    ],
+    "gateway": "10.200.104.1",
+    "dns": "10.200.104.30,8.8.8.8",
+    "vSwitch": "UPLINK",
+
+    "awx": [
+        {
+          "AwxUrl":"http://10.200.104.20:31399",
+          "AwxUsername": "api_user",
+          "AwxPassword": "pmR93rtqDZ8W9WCzPVqNDhzsZVLuLs",
+          "InventoryName1": "K8s_Cluster",
+          "InventoryName2": "K8s_LBNFS",
+          "GroupName_1": "master",
+          "GroupName_2": "worker",
+          "GroupName_3": "load-balancer-nfs",
+          "machine_creds": "Ubuntu Template User"
+        }
+    ],
+
+    "awx_jobtemplates": [
+      {
+        "name": "K8s-Deployment-Phase2-Update_VMs_1",
+        "inventory": "K8s_LBNFS"
+      },
+      {
+        "name": "K8s-Deployment-Phase2-Update_VMs_2",
+        "inventory": "K8s_Cluster"
+      },
+      {
+        "name": "K8s-Deployment-Phase2-NFSDNS",
+        "inventory": "K8s_LBNFS"
+      },
+      {
+        "name": "K8s-Deployment-Phase3-Requirements",
+        "inventory": "K8s_Cluster"
+      },
+      {
+        "name": "K8s-Deployment-Phase3-Initialize",
+        "inventory": "K8s_Cluster"
+      },
+      {
+        "name": "K8s-Deployment-Phase3-Configure",
+        "inventory": "K8s_Cluster"
+      },
+      {
+        "name": "K8s-Deployment-Phase3-Deploy-Apps",
+        "inventory": "K8s_Cluster"
+      }
+    ]
+  }

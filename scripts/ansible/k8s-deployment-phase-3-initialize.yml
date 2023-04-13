@@ -1,0 +1,150 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================#     
+---
+- name: Phase 3 - Initialize K8s cluster
+  hosts: master
+  become: true
+  vars_files:
+    - variables.yaml
+  tasks:
+
+#---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
+    - name: Get the first master in the group
+      set_fact:
+         initial_master: "{{ groups['master'] | sort | first }}"
+
+#---------[Check if port 6443 is available on lb]-------------------------------------------------------------------------------------------------------------#
+    - name: Wait for port 6443 to become available
+      wait_for:
+        host: "{{NFSLB_IP}}"
+        port: 6443
+        timeout: 300
+        state: started
+      become: true
+
+#---------[Pull K8s images]-----------------------------------------------------------------------------------------------------------------------------------#
+    - name: Pull image # //TODO Container Socket?
+      when: inventory_hostname == initial_master
+      shell: kubeadm config images pull
+
+#---------[Initialize cluster]--------------------------------------------------------------------------------------------------------------------------------#
+    - name: run Kubeadm initial_master
+      when: inventory_hostname == initial_master
+      shell: kubeadm init --ignore-preflight-errors SystemVerification --pod-network-cidr=10.244.0.0/16 --control-plane-endpoint="{{NFSLB_IP}}":6443 --cri-socket=/run/containerd/containerd.sock
+
+#---------[Export config]-------------------------------------------------------------------------------------------------------------------------------------#
+    - name: Export Config
+      when: inventory_hostname == initial_master
+      shell: export KUBECONFIG=/etc/kubernetes/admin.conf
+      ignore_errors: yes
+
+    - name: Copy admin.conf to shared directory
+      when: inventory_hostname == initial_master
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /mnt/nfs/admin.conf
+        mode: '0600'
+        remote_src: yes
+
+    - name: Create .kube directory
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    - name: Copy admin.conf to /root/.kube/config
+      when: inventory_hostname == initial_master
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        mode: '0600'
+        owner: root
+        group: root
+        remote_src: yes
+
+#---------[Install Flannel]-----------------------------------------------------------------------------------------------------------------------------------#
+    - name: Install Flannel network plugin
+      become: true
+      command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+      when: inventory_hostname == initial_master
+    
+#---------[Create Join Command file]--------------------------------------------------------------------------------------------------------------------------#
+    - name: Create join command file
+      when: inventory_hostname == initial_master
+      shell: kubeadm token create --print-join-command > /mnt/nfs/join_command.sh
+
+#---------[Join other master to the cluster]------------------------------------------------------------------------------------------------------------------#
+    - name: Read join command from file
+      when: inventory_hostname != initial_master
+      shell: "sh /mnt/nfs/join_command.sh --experimental-control-plane"
+
+#---------[Join other worker nodes]---------------------------------------------------------------------------------------------------------------------------#
+- name: join Kubernetes cluster (worker)
+  hosts: worker
+  become: true
+
+  tasks:
+    - name: chmod +x /mnt/nfs/join_command.sh
+      shell: chmod +x /mnt/nfs/join_command.sh
+      
+    - name: Join worker nodes to cluster
+      shell: /mnt/nfs/join_command.sh
+
+- name: Phase 3 - Configure cluster
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars_files:
+    - variables.yaml
+  tasks:
+
+#---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
+    - name: Get the first master in the group
+      set_fact:
+         initial_master: "{{ groups['master'] | sort | first }}"
+
+#---------[Label master nodes]--------------------------------------------------------------------------------------------------------------------------------#
+    - name: configure master node labels
+      shell: kubectl label node "{{ item }}" node-role.kubernetes.io/master=master --overwrite
+      when: inventory_hostname == initial_master
+      with_items:
+        - "{{Master01_FQDN}}"
+        - "{{Master02_FQDN}}"
+        - "{{Master03_FQDN}}"
+    
+    - name: configure master node labels
+      shell: kubectl label node "{{ item }}" node-role.kubernetes.io/control-plane=control-plane --overwrite
+      when: inventory_hostname == initial_master
+      with_items:
+        - "{{Master02_FQDN}}"
+        - "{{Master03_FQDN}}"
+
+#---------[Label worker nodes]--------------------------------------------------------------------------------------------------------------------------------#
+    - name: configure worker node labels
+      shell: kubectl label node "{{ item }}" node-role.kubernetes.io/worker=worker --overwrite
+      when: inventory_hostname == initial_master
+      with_items:
+        - "{{Worker01_FQDN}}"
+        - "{{Worker02_FQDN}}"
+        - "{{Worker03_FQDN}}"
+
+    - name: Copy admin.conf to /root/.kube/config
+      when: inventory_hostname in groups['master'] and inventory_hostname != initial_master
+      copy:
+        src: /mnt/nfs/admin.conf
+        dest: /root/.kube/config
+        mode: '0600'
+        owner: root
+        group: root
+        remote_src: yes

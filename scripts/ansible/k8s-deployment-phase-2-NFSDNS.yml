@@ -1,0 +1,226 @@
+#===========================================================================================================================================================# 
+#                 █████  █████ ███████████    █████████  ███████████   ██████████   █████████   ███████████      █████████     █████████                    # 
+#                ░░███  ░░███ ░░███░░░░░███  ███░░░░░███░░███░░░░░███ ░░███░░░░░█  ███░░░░░███ ░█░░░███░░░█     ███░░░░░███   ███░░░░░███                   #
+#                 ░███   ░███  ░███    ░███ ███     ░░░  ░███    ░███  ░███  █ ░  ░███    ░███ ░   ░███  ░     ░███    ░███  ███     ░░░                    #
+#                 ░███   ░███  ░██████████ ░███          ░██████████   ░██████    ░███████████     ░███        ░███████████ ░███                            #
+#                 ░███   ░███  ░███░░░░░░  ░███    █████ ░███░░░░░███  ░███░░█    ░███░░░░░███     ░███        ░███░░░░░███ ░███    █████                   #
+#                 ░███   ░███  ░███        ░░███  ░░███  ░███    ░███  ░███ ░   █ ░███    ░███     ░███        ░███    ░███ ░░███  ░░███                    #
+#                 ░░████████   █████        ░░█████████  █████   █████ ██████████ █████   █████    █████       █████   █████ ░░█████████                    #
+#                   ░░░░░░░░   ░░░░░          ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░    ░░░░░       ░░░░░   ░░░░░   ░░░░░░░░░                    #
+#===========================================================================================================================================================# 
+# Created by Mathis Okle                                                                                                                                    #
+# Version 1.0                                                                                                                                               #
+#===========================================================================================================================================================# 
+---
+- name: Phase 2 - Configure DNS, NFS and Proxy
+  hosts: all
+  become: true
+  gather_facts: no
+  vars_files:
+    - variables.yaml
+  tasks:
+
+#---------[Update firewall rules]-----------------------------------------------------------------------------------------------------------------#
+    - name: Update Firewall Rules to allow 6443 and 443
+      shell: ufw allow "{{item}}"
+      with_items:
+        - 6443
+        - 443
+    
+    - name:  Grant Firewall access
+      shell: sudo ufw allow from "{{item}}"/24 to any port nfs
+      with_items:
+        - "{{Master01_IP}}"
+        - "{{Master02_IP}}"
+        - "{{Master03_IP}}"
+        - "{{Worker01_IP}}"
+        - "{{Worker02_IP}}"
+        - "{{Worker03_IP}}"
+
+    - name: add hostname to /etc/hosts
+      shell: sudo bash -c 'echo "{{NFSLB_IP}}" "{{NFSLB_FQDN}}" >> /etc/hosts'
+
+#---------[install required packages]-----------------------------------------------------------------------------------------------------------------#
+    - name: Install reqired packages
+      apt:
+        name:
+          - nfs-kernel-server
+          - nfs-common
+          - haproxy
+          - sshpass
+        state: present
+
+#---------[Setup NFS Server]-----------------------------------------------------------------------------------------------------------------#
+    - name: Create NFS export directory
+      file:
+        path: /data
+        state: directory
+    
+    - name: Set directory permissions
+      shell: sudo chown -R nobody:nogroup /data
+
+    - name: Set file permissions
+      shell: sudo chmod 777 /data
+
+    - name: Configure NFS export
+      lineinfile:
+        path: /etc/exports
+        line: "/data *(rw,sync,no_subtree_check,no_root_squash)"
+        state: present
+        create: yes
+
+    - name: Exporting NFS directory
+      shell: sudo exportfs -a
+
+    - name:  Restart NFS server
+      shell: sudo systemctl restart nfs-kernel-server
+
+#---------[Copy files from AWX Host]-----------------------------------------------------------------------------------------------------------------#
+    - name: Copy cloudflare.crt and cloudflare.key from Ansible AWX host
+      shell: sshpass -p 'IbgiG2003' scp -o StrictHostKeyChecking=no root@"{{AWX_IP}}":/root/certs/"{{item}}" /data
+      with_items:
+        - cloudflare.crt
+        - cloudflare.key
+
+    - name: Deployment yamls from Ansible AWX host
+      shell: sshpass -p 'IbgiG2003' scp -o StrictHostKeyChecking=no root@"{{AWX_IP}}":/root/deployment-yamls/"{{item}}" /root
+      with_items:
+        - grafana-dashboard.yaml
+
+#---------[Install and configure CoreDNS]-----------------------------------------------------------------------------------------------------------------#
+    - name: Download CoreDNS archive
+      get_url:
+        url: "{{ coredns_archive_url }}"
+        dest: "/tmp/{{ coredns_archive_name }}"
+
+    - name: Extract CoreDNS archive
+      shell: tar xzf /tmp/coredns_1.10.1_linux_amd64.tgz -C /usr/local/bin
+
+    - name: Disable systemd-resolved service
+      systemd:
+        name: systemd-resolved.service
+        state: stopped
+        enabled: no
+
+    - name: Create CoreDNS configuration directory
+      file:
+        path: /etc/coredns
+        state: directory
+
+    - name: Generate Corefile
+      ansible.builtin.copy:
+        dest: /etc/coredns/Corefile
+        mode: '0644'
+        content: |
+              . {
+                  forward . 8.8.8.8 8.8.4.4
+                  errors
+                  log
+                  health
+                  ready
+              }
+              it-ads.ch:53 {
+                  forward . 8.8.8.8 8.8.4.4
+                  hosts {
+                      {{Master01_IP}} {{Master01_FQDN}} {{Master01_Hostname}}
+                      {{Master02_IP}} {{Master02_FQDN}} {{Master02_Hostname}}
+                      {{Master03_IP}} {{Master03_FQDN}} {{Master03_Hostname}}
+                      {{Worker01_IP}} {{Worker01_FQDN}} {{Worker01_Hostname}}
+                      {{Worker02_IP}} {{Worker02_FQDN}} {{Worker02_Hostname}}
+                      {{Worker03_IP}} {{Worker03_FQDN}} {{Worker03_Hostname}}
+                      {{NFSLB_IP}} {{NFSLB_FQDN}} {{NFSLB_Hostname}}
+                      {{NFSLB_IP}} {{PROMETHEUS_FQDN}} prometheus
+                      {{NFSLB_IP}} {{ALERTMANAGER_FQDN}} alertmanager
+                      {{NFSLB_IP}} {{GRAFANA_FQDN}} grafana
+                      {{NFSLB_IP}} {{DRUPAL_FQDN}} grafana
+                  }
+                  errors
+                  log
+              }
+
+    - name: Generate CoreDNS systemd unit file
+      copy:
+        dest: /etc/systemd/system/coredns.service
+        content: |
+          [Unit]
+          Description=CoreDNS DNS server
+          Documentation=https://coredns.io/manual/toc/
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/local/bin/coredns -conf /etc/coredns/Corefile
+          User=root
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable CoreDNS service
+      systemd:
+        name: coredns.service
+        enabled: yes
+
+    - name: Start CoreDNS service
+      systemd:
+        name: coredns.service
+        state: started
+
+#---------[Setup HA Proxy]-----------------------------------------------------------------------------------------------------------------#
+    - name: Copy HAProxy configuration file
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+            stats timeout 30s
+            user root
+            group root
+            daemon
+
+          defaults
+            mode http
+            option dontlognull
+            timeout connect 5000
+            timeout client 50000
+            timeout server 50000
+
+          frontend k8s-api
+            bind *:6443
+            mode tcp
+            default_backend k8s-api
+
+          backend k8s-api
+            mode tcp
+            option tcp-check
+            balance roundrobin
+            default-server inter 10s downinter 5s rise 2 fall 2 slowstart 60s maxconn 250 maxqueue 256 weight 100
+            server apiserver1 {{Master01_FQDN}}:6443 check
+            server apiserver2 {{Master02_FQDN}}:6443 check
+            server apiserver3 {{Master03_FQDN}}:6443 check
+
+          frontend nginx
+            bind *:443
+            mode tcp
+            default_backend nginx
+
+          backend nginx
+            mode tcp
+            option tcp-check
+            balance roundrobin
+            default-server inter 10s downinter 5s rise 2 fall 2 slowstart 60s maxconn 250 maxqueue 256 weight 100
+            server apiserver1 {{Master01_FQDN}}:443 check
+            server apiserver2 {{Master02_FQDN}}:443 check
+            server apiserver3 {{Master03_FQDN}}:443 check
+
+    - name: Enable HAProxy service
+      systemd:
+        name: haproxy
+        enabled: yes
+        state: started
+
+    - name: restart HAProxy service
+      shell: sudo systemctl restart haproxy
+
