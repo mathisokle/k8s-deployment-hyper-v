@@ -477,19 +477,21 @@
     - name: Create a folder
       when: inventory_hostname == initial_master
       community.grafana.grafana_folder:
-        url: "https://{{GRAFANA_FQDN:}}"
+        url: "https://{{GRAFANA_FQDN}}"
         title: "Monitoring"
         url_username: admin
         url_password: "{{GRAFANA_ADMIN_PW}}"
         state: present
         validate_certs: no
+      ignore_errors: yes
 
     - name: Import Grafana dashboard
       when: inventory_hostname == initial_master
       community.grafana.grafana_dashboard:
-        grafana_url: "https://{{GRAFANA_FQDN:}}"
+        grafana_url: "https://{{GRAFANA_FQDN}}"
         url_username: admin
         url_password: "{{GRAFANA_ADMIN_PW}}"
         folder: Monitoring
         dashboard_id: 315
         validate_certs: no
+      ignore_errors: yes
