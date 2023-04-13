@@ -101,12 +101,11 @@
     - name: Join worker nodes to cluster
       shell: /mnt/nfs/join_command.sh
 
-- name: Phase 3 - Configure cluster
-  hosts: master
+
+
+- hosts: master
   become: true
-
   tasks:
-
 #---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
     - name: Get the first master in the group
       set_fact:
