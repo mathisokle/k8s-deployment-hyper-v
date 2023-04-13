@@ -103,10 +103,8 @@
 
 - name: Phase 3 - Configure cluster
   hosts: all
-  become: yes
-  gather_facts: no
-  vars_files:
-    - variables.yaml
+  become: true
+  
   tasks:
 
 #---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
