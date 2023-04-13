@@ -102,9 +102,9 @@
       shell: /mnt/nfs/join_command.sh
 
 - name: Phase 3 - Configure cluster
-  hosts: all
+  hosts: master
   become: true
-  
+
   tasks:
 
 #---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
