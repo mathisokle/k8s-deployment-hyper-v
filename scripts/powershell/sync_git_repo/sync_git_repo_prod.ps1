@@ -14,8 +14,8 @@
 
 #-------------[Variables]--------------------------------------------------------------------------------------------------------------------------------------
 $repoOwner = "mathisokle"
-$repoName = "deploy-hyper-v-master"
-$branchName  = "Dev"
+$repoName = "k8s-deployment-hyper-v"
+$branchName  = "main"
 $sourceFolder = "main"
 $destinationFolder = "C:\Deploy-Hyper-V-Master\main\"
 

@@ -92,10 +92,6 @@
         "inventory": "K8s_Cluster"
       },
       {
-        "name": "K8s-Deployment-Phase3-Configure",
-        "inventory": "K8s_Cluster"
-      },
-      {
         "name": "K8s-Deployment-Phase3-Deploy-Apps",
         "inventory": "K8s_Cluster"
       }
