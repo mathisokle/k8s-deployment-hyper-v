@@ -33,7 +33,9 @@ param(
     [string]$VMName,
     [string]$FQDN = $VMName,
     [Parameter(Mandatory=$true, ParameterSetName='RootPassword')]
-    [string]$RootPassword = $rootpassword,
+    [string]$RootPassword = "sykuM6T7T3f5AzOls2x5",
+    [Parameter(Mandatory=$true, ParameterSetName='RootPassword')]
+    [string]$ubuntupassword = "AsrU6Wg3OpExXl7hcq7B",
     [Parameter(Mandatory=$true, ParameterSetName='RootPublicKey')]
     [string]$RootPublicKey,
     [uint64]$VHDXSizeBytes = 20GB,
@@ -176,8 +178,8 @@ ssh_authorized_keys:
 - ssh-rsassh-rsa $sshkey
 chpasswd:
   list: |
-     root:IbgiG2003
-     ubuntu:IbgiG2003
+     root:$rootpassword
+     ubuntu:$ubuntupassword
   expire: False
 $sectionWriteFiles
 $sectionRunCmd
