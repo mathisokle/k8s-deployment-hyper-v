@@ -102,7 +102,7 @@
       shell: /mnt/nfs/join_command.sh
 
 - name: configure cluster
-  hosts: master
+  hosts: all
   become: true
   
   tasks:
