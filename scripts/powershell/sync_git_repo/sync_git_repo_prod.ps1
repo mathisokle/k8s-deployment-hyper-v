@@ -25,4 +25,3 @@ Remove-Item -Path $destinationFolder -Recurse -Force
 #-------------[Clone or update repository]---------------------------------------------------------------------------------------------------------------------
 git clone "https://github.com/$repoOwner/$repoName.git" $destinationFolder
 git -C $destinationFolder checkout $branchName
-

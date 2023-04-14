@@ -40,7 +40,6 @@ function Write-Log {
 
 #----------------------------------------------------------------------------------------------------------------------------------------------#
 # Function to check AWX Connection
-
 function Get-AWX-Connection {
     [CmdletBinding()]
     param(
@@ -68,6 +67,8 @@ function Get-AWX-Connection {
     }
 }
 
+#----------------------------------------------------------------------------------------------------------------------------------------------#
+# Function to create AWX credentials
 function New-AWX-Credentials {
     [CmdletBinding()]
     param(
@@ -110,7 +111,6 @@ function New-AWX-Credentials {
 
 #----------------------------------------------------------------------------------------------------------------------------------------------#
 # Function to create an inventory
-
 function New-AWXInventory {
     [CmdletBinding()]
     param(
@@ -149,7 +149,6 @@ function New-AWXInventory {
 
 #----------------------------------------------------------------------------------------------------------------------------------------------#
 # Function to create a host and add it to a group
-
 function New-AWXHostAndAddToGroup {
     param (
         [string]$AWXUrl,
@@ -200,6 +199,8 @@ function New-AWXHostAndAddToGroup {
     } -Body (ConvertTo-Json $addHostToGroupBody)
 }
 
+#----------------------------------------------------------------------------------------------------------------------------------------------#
+# Function to create a group
 function New-AWXInventoryGroup {
     [CmdletBinding()]
     param(
@@ -257,10 +258,8 @@ function Update-AWXInventoryOnJobTemplate {
         [string]$CredentialName
     )
 
-    # Encode the username and password for basic authentication
     $authHeader = "Basic {0}" -f [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($AwxUsername):$($AwxPassword)"))
 
-    # Get the job template ID
     $jobTemplatesUrl = "$AwxUrl/api/v2/job_templates/?name=$JobTemplateName"
     $jobTemplateResponse = Invoke-RestMethod -Method Get -Uri $jobTemplatesUrl -Headers @{Authorization=$authHeader} -ContentType "application/json"
     if ($jobTemplateResponse.results.count -eq 0) {
@@ -268,7 +267,6 @@ function Update-AWXInventoryOnJobTemplate {
     }
     $jobTemplateId = $jobTemplateResponse.results[0].id
 
-    # Get the inventory ID
     $inventoriesUrl = "$AwxUrl/api/v2/inventories/?name=$InventoryName"
     $inventoryResponse = Invoke-RestMethod -Method Get -Uri $inventoriesUrl -Headers @{Authorization=$authHeader} -ContentType "application/json"
     if ($inventoryResponse.results.count -eq 0) {
@@ -276,7 +274,6 @@ function Update-AWXInventoryOnJobTemplate {
     }
     $inventoryId = $inventoryResponse.results[0].id
 
-    # Get the credential ID
     $credentialsUrl = "$AwxUrl/api/v2/credentials/?name=$CredentialName"
     $credentialResponse = Invoke-RestMethod -Method Get -Uri $credentialsUrl -Headers @{Authorization=$authHeader} -ContentType "application/json"
     if ($credentialResponse.results.count -eq 0) {
@@ -284,10 +281,8 @@ function Update-AWXInventoryOnJobTemplate {
     }
     $credentialId = $credentialResponse.results[0].id
 
-    # Construct the URL for the job template API endpoint
     $jobTemplateUrl = "$AwxUrl/api/v2/job_templates/$jobTemplateId/"
 
-    # Construct the payload for the job template update request
     $jobTemplatePayload = @{
         "inventory" = $inventoryId
         "credentials" = @{
@@ -298,7 +293,6 @@ function Update-AWXInventoryOnJobTemplate {
         }
     } | ConvertTo-Json
 
-    # Send the request and read the response
     $headers = @{Authorization=$authHeader; ContentType='application/json'}
     Invoke-RestMethod -Method Patch -Uri $jobTemplateUrl -Headers @{Authorization=$authHeader; 'Content-Type'='application/json'} -Body $jobTemplatePayload
 }
