@@ -77,13 +77,13 @@
 
 #---------[Copy files from AWX Host]-----------------------------------------------------------------------------------------------------------------#
     - name: Copy cloudflare.crt and cloudflare.key from Ansible AWX host
-      shell: sshpass -p 'sykuM6T7T3f5AzOls2x5' scp -o StrictHostKeyChecking=no root@"{{AWX_IP}}":/root/certs/"{{item}}" /data
+      shell: sshpass -p 'IbgiG2003' scp -o StrictHostKeyChecking=no root@"{{AWX_IP}}":/root/certs/"{{item}}" /data
       with_items:
         - cloudflare.crt
         - cloudflare.key
 
     - name: Deployment yamls from Ansible AWX host
-      shell: sshpass -p 'sykuM6T7T3f5AzOls2x5' scp -o StrictHostKeyChecking=no root@"{{AWX_IP}}":/root/deployment-yamls/"{{item}}" /root
+      shell: sshpass -p 'IbgiG2003' scp -o StrictHostKeyChecking=no root@"{{AWX_IP}}":/root/deployment-yamls/"{{item}}" /root
       with_items:
         - grafana-dashboard.yaml
 
