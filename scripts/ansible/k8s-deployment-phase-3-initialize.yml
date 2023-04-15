@@ -13,7 +13,7 @@
 #===========================================================================================================================================================#     
 ---
 - name: Phase 3 - Initialize K8s cluster
-  hosts: master
+  hosts: all
   become: true
   vars_files:
     - variables.yaml
@@ -34,7 +34,7 @@
       become: true
 
 #---------[Pull K8s images]-----------------------------------------------------------------------------------------------------------------------------------#
-    - name: Pull image # //TODO Container Socket?
+    - name: Pull image 
       when: inventory_hostname == initial_master
       shell: kubeadm config images pull
 
@@ -75,9 +75,9 @@
 
 #---------[Install Flannel]-----------------------------------------------------------------------------------------------------------------------------------#
     - name: Install Flannel network plugin
+      when: inventory_hostname == initial_master
       become: true
       command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-      when: inventory_hostname == initial_master
     
 #---------[Create Join Command file]--------------------------------------------------------------------------------------------------------------------------#
     - name: Create join command file
@@ -90,26 +90,13 @@
       shell: "sh /mnt/nfs/join_command.sh --experimental-control-plane"
 
 #---------[Join other worker nodes]---------------------------------------------------------------------------------------------------------------------------#
-- name: join Kubernetes cluster (worker)
-  hosts: worker
-  become: true
-
-  tasks:
     - name: chmod +x /mnt/nfs/join_command.sh
+      when: inventory_hostname in groups['worker']
       shell: chmod +x /mnt/nfs/join_command.sh
       
     - name: Join worker nodes to cluster
+      when: inventory_hostname in groups['worker']
       shell: /mnt/nfs/join_command.sh
-
-- name: configure cluster
-  hosts: all
-  become: true
-  
-  tasks:
-#---------[Get first master in group]-------------------------------------------------------------------------------------------------------------------------#
-    - name: Get the first master in the group
-      set_fact:
-         initial_master: "{{ groups['master'] | sort | first }}"
 
 #---------[Label master nodes]--------------------------------------------------------------------------------------------------------------------------------#
     - name: configure master node labels
