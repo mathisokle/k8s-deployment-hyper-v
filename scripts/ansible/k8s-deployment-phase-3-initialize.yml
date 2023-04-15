@@ -86,7 +86,7 @@
 
 #---------[Join other master to the cluster]------------------------------------------------------------------------------------------------------------------#
     - name: Read join command from file
-      when: inventory_hostname != initial_master
+      when: inventory_hostname != initial_master and inventory_hostname in groups['master']
       shell: "sh /mnt/nfs/join_command.sh --experimental-control-plane"
 
 #---------[Join other worker nodes]---------------------------------------------------------------------------------------------------------------------------#
