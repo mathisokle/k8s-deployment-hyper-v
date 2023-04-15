@@ -463,7 +463,7 @@
     - name: create prometheus datasource
       when: inventory_hostname == initial_master
       community.grafana.grafana_datasource:
-        url: "https://{{GRAFANA_FQDN:}}"
+        url: "https://{{GRAFANA_FQDN}}"
         name: prometheus
         ds_type: prometheus
         ds_url: "https://{{PROMETHEUS_FQDN}}"
