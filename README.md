@@ -19,9 +19,7 @@ Um dieses Projekt nutzen zu können, benötigen Sie:
 - Windows 10 oder Windows Server mit installierter Hyper-V-Rolle
 - Mindestens 8 GB freier Arbeitsspeicher (empfohlen: 16 GB)
 - Eine stabile Internetverbindung
-- Git: Anleitung zur Installation
-- Installation
-- Klonen Sie das Repository auf Ihren lokalen Rechner:
+- Git
 
 
 # Nutzung
